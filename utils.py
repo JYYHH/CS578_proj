@@ -143,11 +143,11 @@ def evaluate_binary(
 
 
 def evaluate_multiclass(
-    y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray
+    y_true: np.ndarray, y_pred: np.ndarray
 ) -> Tuple[float, float]:
     """Accuracy only"""
     acc = accuracy_score(y_true, y_pred)
-    return acc, None
+    return acc
 
 
 def evaluate_regression(
@@ -160,17 +160,23 @@ def evaluate_regression(
     return mse, mae, r2
 
 # Early stopping may happen, thus the x-axis might not be able to reach the number of estimators set by the user
-def regression_curve_errors(
-    model, X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, y_test: np.ndarray
+def get_train_err(
+    model, X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, y_test: np.ndarray,
+    task_type: str,
+    method_name: str,
 ) -> Tuple[list, list]:
-    """Per-round MSE for sklearn AdaBoostRegressor via staged_predict."""
-    train_err, test_err = [], []
-    # print(len([pred for pred in model.staged_predict(X_train)]))
-    # print(len([pred for pred in model.staged_predict(X_test)]))
-    for pred_tr in model.staged_predict(X_train):
-        train_err.append(mean_squared_error(y_train, pred_tr))
-    for pred_te in model.staged_predict(X_test):
-        test_err.append(mean_squared_error(y_test, pred_te))
+    # TODO: return the correct error (MSE for regression, Error for classification) for the given method and task type
+    if method_name == "AdaBoost":
+        if task_type == "regression":
+            train_err, test_err = [], []
+            for pred_tr in model.staged_predict(X_train):
+                train_err.append(mean_squared_error(y_train, pred_tr))
+            for pred_te in model.staged_predict(X_test):
+                test_err.append(mean_squared_error(y_test, pred_te))
+        else:
+            train_err, test_err = model.train_errors, model.test_errors
+    else:
+        raise ValueError(f"Unknown method: {method_name}")
     return train_err, test_err
 
 

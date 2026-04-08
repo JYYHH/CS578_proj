@@ -148,3 +148,6 @@ class AdaBoostRegressor(sklearn_AdaBoostRegressor):
             estimator = make_base_regressor(max_depth = max_depth),
             n_estimators = n_estimators,
         )
+    def fit(self, X, y, X_test = None, y_test = None):
+        # just drop the X_test and y_test arguments, since we directly refer the sklearn's implementation
+        super().fit(X, y)
