@@ -5,122 +5,115 @@ Preprocessing, evaluation, and plotting helpers.
 from __future__ import annotations
 
 import os
-from typing import Optional, Tuple
+from typing import Literal, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import (
+    accuracy_score,
+    mean_absolute_error,
+    mean_squared_error,
+    r2_score,
+    roc_auc_score,
+)
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 
+TaskType = Literal["binary", "multiclass", "regression"]
 
-# ----- Adult (UCI) -----
+
+def _label_encode_non_numeric(df: pd.DataFrame) -> pd.DataFrame:
+    for col in df.columns:
+        if not pd.api.types.is_numeric_dtype(df[col]):
+            df[col] = LabelEncoder().fit_transform(df[col].astype(str))
+    return df
+
+# ----- Adult (binary classification, labels +1 / -1) -----
 
 
 def preprocess_adult(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
-    """Missing values, encode categoricals; labels in {+1, -1} for >50K vs <=50K."""
+    """Encode categoricals; labels in {+1, -1} for >50K vs <=50K."""
     df = df.dropna()
     df["income"] = df["income"].str.strip().str.rstrip(".")
     df["label"] = df["income"].apply(lambda x: 1 if x == ">50K" else -1)
     X_df = df.drop(columns=["income", "label"])
-    y = df["label"].values
-    for col in X_df.select_dtypes(include="object").columns:
-        le = LabelEncoder()
-        X_df[col] = le.fit_transform(X_df[col].astype(str))
+    y = df["label"].values.astype(int)
+    X_df = _label_encode_non_numeric(X_df)
     X = X_df.values.astype(float)
     return X, y
 
 
-# ----- Communities and Crime (UCI) -----
+# ----- Communities and Crime (regression) -----
 
 
 def preprocess_communities_crime(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray]:
     """
-    UCI Communities and Crime: skip non-predictive columns 0-4 (incl. string
-    communityname); from column 5 onward all fields are numeric in the UCI file.
-    Last column is ViolentCrimesPerPop (normalized). Binary labels via median split.
+    UCI Communities and Crime: skip columns 0-4; features are numeric columns 5..end-1;
+    target is last column ViolentCrimesPerPop (real-valued, normalized in UCI).
     """
     df = df.replace("?", np.nan)
     num = df.iloc[:, 5:].apply(pd.to_numeric, errors="coerce").dropna()
-    y_cont = num.iloc[:, -1].values.astype(float)
+    y = num.iloc[:, -1].values.astype(float)
     X = num.iloc[:, :-1].values.astype(float)
-    median = np.median(y_cont)
-    y = np.where(y_cont > median, 1, -1)
     return X, y
 
 
-# ----- MNIST (binary: digits 0 vs 1) -----
+# ----- MNIST (multiclass, labels 0 .. 9) -----
 
 
-def preprocess_mnist_binary(
+def preprocess_mnist(
     X: np.ndarray, y: np.ndarray, max_samples: Optional[int] = None
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Keep only digits 0 and 1; labels {-1, +1}. Optional subsampling for speed."""
+    """Labels in {0, 1, ..., 9}. Optional subsampling."""
     y = y.astype(int)
-    mask = (y == 0) | (y == 1)
-    X = X[mask]
-    y = y[mask]
     if max_samples is not None and X.shape[0] > max_samples:
         rng = np.random.default_rng(42)
         idx = rng.choice(X.shape[0], size=max_samples, replace=False)
         X = X[idx]
         y = y[idx]
-    y_signed = np.where(y == 0, -1, 1)
-    return X.astype(np.float64), y_signed
+    return X.astype(np.float64), y
 
 
-# ----- Tabular regression CSVs -> binary classification (median split) -----
-
-
-def _label_encode_objects(df: pd.DataFrame, skip: set) -> pd.DataFrame:
-    out = df.copy()
-    for col in out.columns:
-        if col in skip:
-            continue
-        if out[col].dtype == object or str(out[col].dtype) == "string":
-            out[col] = out[col].fillna("__na__").astype(str)
-            out[col] = LabelEncoder().fit_transform(out[col])
-    return out
-
+# ----- Regression tabular (Allstate, Sberbank) -----
 
 def preprocess_allstate_claims(
-    df: pd.DataFrame, target_col: str = "loss"
+    train_df: pd.DataFrame,
+    test_df: Optional[pd.DataFrame] = None,
+    target_col: str = "loss",
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Allstate Claims Severity: median split on loss -> {-1, +1}."""
-    if target_col not in df.columns:
+    """Allstate Claims Severity: real-valued loss."""
+    if test_df is not None:
+        train_df = pd.concat([train_df, test_df], ignore_index=True)
+    if target_col not in train_df.columns:
         raise ValueError(f"Column '{target_col}' not found; expected Allstate train.csv schema.")
-    drop_cols = {"id"} & set(df.columns)
-    y_raw = df[target_col].astype(float).values
-    X_df = df.drop(columns={target_col} | drop_cols)
-    X_df = _label_encode_objects(X_df, skip=set())
-    X_df = X_df.apply(pd.to_numeric, errors="coerce")
-    X_df = X_df.fillna(X_df.median(numeric_only=True))
-    X = X_df.values.astype(float)
-    median = np.median(y_raw)
-    y = np.where(y_raw > median, 1, -1)
-    return X, y
+    train_df = train_df.dropna()
+    y_raw = train_df[target_col].astype(float).values
+    X_train_df = train_df.drop(columns=[target_col, "id"], errors="ignore")
+    X_train_df = _label_encode_non_numeric(X_train_df)
+    X = X_train_df.values.astype(float)
+    return X, y_raw
 
 
 def preprocess_sberbank(
-    df: pd.DataFrame, target_col: str = "price_doc"
+    train_df: pd.DataFrame,
+    test_df: Optional[pd.DataFrame] = None,
+    target_col: str = "price_doc",
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Sberbank Russian Housing: median split on price_doc -> {-1, +1}."""
-    if target_col not in df.columns:
+    """Sberbank: real-valued price_doc."""
+    if test_df is not None:
+        train_df = pd.concat([train_df, test_df], ignore_index=True)
+    if target_col not in train_df.columns:
         raise ValueError(f"Column '{target_col}' not found; expected Sberbank train.csv schema.")
-    id_like = {c for c in df.columns if c.lower() in ("id", "timestamp")}
-    y_raw = pd.to_numeric(df[target_col], errors="coerce").values
-    X_df = df.drop(columns={target_col} | id_like, errors="ignore")
-    X_df = _label_encode_objects(X_df, skip=set())
-    X_df = X_df.apply(pd.to_numeric, errors="coerce")
-    X_df = X_df.fillna(X_df.median(numeric_only=True))
-    mask = ~np.isnan(y_raw)
-    X_df = X_df.loc[mask].reset_index(drop=True)
-    y_raw = y_raw[mask]
-    X = X_df.values.astype(float)
-    median = np.median(y_raw)
-    y = np.where(y_raw > median, 1, -1)
-    return X, y
+    train_df = train_df.dropna()
+    id_like_train = {c for c in train_df.columns if c.lower() in ("id", "timestamp")}
+    y_raw = pd.to_numeric(train_df[target_col], errors="coerce").values
+    X_train_df = train_df.drop(columns={target_col} | id_like_train, errors="ignore")
+    X_train_df = _label_encode_non_numeric(X_train_df)
+    X_train_df = X_train_df.apply(pd.to_numeric, errors="coerce")
+    X = X_train_df.values.astype(float)
+    y_raw = y_raw.astype(float)
+    return X, y_raw
 
 
 # ----- Train / test split -----
@@ -140,13 +133,45 @@ def split_train_test(
 # ----- Evaluation -----
 
 
-def evaluate_classification(
+def evaluate_binary(
     y_true: np.ndarray, y_pred: np.ndarray, y_scores: np.ndarray
 ) -> Tuple[float, float]:
-    """Accuracy and ROC-AUC (scores are real-valued margins before sign)."""
+    """Accuracy and ROC-AUC (margin scores before sign). Labels in {+1, -1} or {0,1}."""
     acc = accuracy_score(y_true, y_pred)
     auc = roc_auc_score(y_true, y_scores)
     return acc, auc
+
+
+def evaluate_multiclass(
+    y_true: np.ndarray, y_pred: np.ndarray, y_proba: np.ndarray
+) -> Tuple[float, float]:
+    """Accuracy only"""
+    acc = accuracy_score(y_true, y_pred)
+    return acc, None
+
+
+def evaluate_regression(
+    y_true: np.ndarray, y_pred: np.ndarray
+) -> Tuple[float, float, float]:
+    """MSE, MAE, R^2."""
+    mse = mean_squared_error(y_true, y_pred)
+    mae = mean_absolute_error(y_true, y_pred)
+    r2 = r2_score(y_true, y_pred)
+    return mse, mae, r2
+
+# Early stopping may happen, thus the x-axis might not be able to reach the number of estimators set by the user
+def regression_curve_errors(
+    model, X_train: np.ndarray, y_train: np.ndarray, X_test: np.ndarray, y_test: np.ndarray
+) -> Tuple[list, list]:
+    """Per-round MSE for sklearn AdaBoostRegressor via staged_predict."""
+    train_err, test_err = [], []
+    # print(len([pred for pred in model.staged_predict(X_train)]))
+    # print(len([pred for pred in model.staged_predict(X_test)]))
+    for pred_tr in model.staged_predict(X_train):
+        train_err.append(mean_squared_error(y_train, pred_tr))
+    for pred_te in model.staged_predict(X_test):
+        test_err.append(mean_squared_error(y_test, pred_te))
+    return train_err, test_err
 
 
 # ----- Plotting -----
@@ -157,20 +182,20 @@ def plot_error_curves(
     test_errors: Optional[list],
     title: str,
     outfile: str = "adaboost_error_curve.png",
+    ylabel: str = "Classification error",
 ) -> None:
-    """Plot training (and optional test) classification error vs. boosting round."""
     plt.figure(figsize=(8, 5))
-    plt.plot(range(1, len(train_errors) + 1), train_errors, label="Train Error", linewidth=2)
+    plt.plot(range(1, len(train_errors) + 1), train_errors, label="Train", linewidth=2)
     if test_errors:
         plt.plot(
             range(1, len(test_errors) + 1),
             test_errors,
-            label="Test Error",
+            label="Test",
             linewidth=2,
             linestyle="--",
         )
-    plt.xlabel("Boosting Round")
-    plt.ylabel("Classification Error")
+    plt.xlabel("Boosting round")
+    plt.ylabel(ylabel)
     plt.title(title)
     plt.legend()
     plt.tight_layout()

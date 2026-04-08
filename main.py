@@ -10,8 +10,20 @@ import argparse
 import numpy as np
 
 from dataset import load_dataset
-from ensemble_method import AdaBoost
-from utils import evaluate_classification, plot_error_curves, split_train_test
+from ensemble_method import (
+    AdaBoostBinaryClassifier,
+    AdaBoostMulticlassClassifier,
+    AdaBoostRegressor,
+    # TODO: for your methods
+)
+from utils import (
+    evaluate_binary,
+    evaluate_multiclass,
+    evaluate_regression,
+    plot_error_curves,
+    regression_curve_errors,
+    split_train_test,
+)
 
 
 def parse_args():
@@ -20,18 +32,18 @@ def parse_args():
         "--dataset",
         type=str,
         default="adult",
-        help="adult | communities_crime | mnist | allstate | sberbank",
+        help="adult | communities_crime | mnist | ca_housing | allstate | sberbank",
     )
-    p.add_argument("--n_estimators", type=int, default=200)
+    p.add_argument("--n_estimators", type=int, default=100)
     p.add_argument("--max_depth", type=int, default=1)
     p.add_argument("--test_size", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
-    p.add_argument("--no_stratify", action="store_true", help="Disable stratified split")
+    p.add_argument("--no_stratify", action="store_true", help="Disable stratified split (classification only)")
     p.add_argument(
         "--mnist_max_samples",
         type=int,
         default=12000,
-        help="Max samples after filtering to digits 0/1 (MNIST only); 0 = use all",
+        help="Max MNIST samples (multiclass 0-9); 0 = use full set",
     )
     p.add_argument("--plot", type=str, default="adaboost_error_curve.png")
     return p.parse_args()
@@ -39,35 +51,86 @@ def parse_args():
 
 def main():
     args = parse_args()
-    mnist_max = None if args.mnist_max_samples == 0 else args.mnist_max_samples
+    mnist_max = 0 if args.mnist_max_samples == 0 else args.mnist_max_samples
 
-    X, y = load_dataset(
+    X, y, task = load_dataset(
         args.dataset,
         mnist_max_samples=mnist_max,
     )
 
+    stratify = task in ("binary", "multiclass") and not args.no_stratify
     X_train, X_test, y_train, y_test = split_train_test(
         X,
         y,
         test_size=args.test_size,
         random_state=args.seed,
-        stratify=not args.no_stratify,
+        stratify=stratify,
     )
 
     print(f"Train size: {X_train.shape[0]} | Test size: {X_test.shape[0]}")
-    print(f"Features: {X_train.shape[1]} | Class balance (train): {np.mean(y_train == 1):.2%} positive\n")
+    print(f"Features: {X_train.shape[1]} | Task: {task}")
+    if task == "binary":
+        print(f"Class balance (train, y=+1): {np.mean(y_train == 1):.2%}\n")
+    elif task == "multiclass":
+        print(f"Classes: {np.unique(y_train).size} (labels 0..{np.unique(y_train).size - 1})\n")
+    else:
+        print(f"Target (train): mean={y_train.mean():.4g}, std={y_train.std():.4g}\n")
 
-    model = AdaBoost(n_estimators=args.n_estimators, max_depth=args.max_depth)
-    model.fit(X_train, y_train, X_test=X_test, y_test=y_test)
+    if task == "binary":
+        model = AdaBoostBinaryClassifier(n_estimators=args.n_estimators, max_depth=args.max_depth)
+        model.fit(X_train, y_train, X_test=X_test, y_test=y_test)
+        y_pred = model.predict(X_test)
+        y_scores = model.predict_score(X_test)
+        acc, auc = evaluate_binary(y_test, y_pred, y_scores)
+        print(f"Test Accuracy : {acc:.4f}")
+        print(f"Test AUC-ROC  : {auc:.4f}")
+        title = f"AdaBoost.M1: error vs. rounds ({args.dataset})"
+        plot_error_curves(
+            model.train_errors,
+            model.test_errors or None,
+            title=title,
+            outfile=args.plot,
+            ylabel="Classification error",
+        )
 
-    y_pred = model.predict(X_test)
-    y_scores = model.predict_proba(X_test)
-    acc, auc = evaluate_classification(y_test, y_pred, y_scores)
-    print(f"Test Accuracy : {acc:.4f}")
-    print(f"Test AUC-ROC  : {auc:.4f}")
+    elif task == "multiclass":
+        class_num = int(np.max(y)) + 1
+        model = AdaBoostMulticlassClassifier(
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            class_num=class_num,
+        )
+        model.fit(X_train, y_train, X_test=X_test, y_test=y_test)
+        y_pred = model.predict(X_test)
+        y_proba = model.predict_score(X_test)
+        acc, _ = evaluate_multiclass(y_test, y_pred, y_proba)
+        print(f"Test Accuracy : {acc:.4f}")
+        title = f"AdaBoost SAMME: error vs. rounds ({args.dataset})"
+        plot_error_curves(
+            model.train_errors,
+            model.test_errors or None,
+            title=title,
+            outfile=args.plot,
+            ylabel="Classification error",
+        )
 
-    title = f"AdaBoost: Error vs. Rounds ({args.dataset})"
-    plot_error_curves(model.train_errors, model.test_errors or None, title=title, outfile=args.plot)
+    else:
+        model = AdaBoostRegressor(n_estimators=args.n_estimators, max_depth=args.max_depth)
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        mse, mae, r2 = evaluate_regression(y_test, y_pred)
+        print(f"Test MSE : {mse:.6g}")
+        print(f"Test MAE : {mae:.6g}")
+        print(f"Test R^2 : {r2:.4f}")
+        train_err, test_err = regression_curve_errors(model, X_train, y_train, X_test, y_test)
+        title = f"AdaBoost.R2: MSE vs. rounds ({args.dataset})"
+        plot_error_curves(
+            train_err,
+            test_err,
+            title=title,
+            outfile=args.plot,
+            ylabel="Mean squared error",
+        )
 
 
 if __name__ == "__main__":
