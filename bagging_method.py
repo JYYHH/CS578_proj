@@ -6,7 +6,7 @@ from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, roc_auc_score, mean_squared_error, r2_score, log_loss
 
-from datasets import load_adult_dataset, preprocess_adult, load_california_housing
+from dataset import load_adult, load_ca_housing
 
 
 # ============================================================
@@ -18,8 +18,7 @@ def run_bagging_classifier():
     print("Part 1: BaggingClassifier  (UCI Adult Income)")
     print("=" * 60)
 
-    df = load_adult_dataset()
-    X, y = preprocess_adult(df)
+    X, y, _ = load_adult()
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
@@ -174,7 +173,7 @@ def run_bagging_regressor():
     print("Part 2: BaggingRegressor  (California Housing)")
     print("=" * 60)
 
-    X, y = load_california_housing()   # y = median house value (100k USD)
+    X, y, _ = load_ca_housing()   # y = median house value (100k USD)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
@@ -241,8 +240,7 @@ def run_bagging_regressor():
 
 if __name__ == "__main__":
     # load data once, share across experiments
-    df = load_adult_dataset()
-    X, y = preprocess_adult(df)
+    X, y, _ = load_adult()
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
