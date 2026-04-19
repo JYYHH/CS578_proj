@@ -86,6 +86,7 @@ def load_mnist(max_samples: Optional[int] = 12000) -> Tuple[np.ndarray, np.ndarr
     X, y = fetch_openml("mnist_784", version=1, return_X_y=True, as_frame=False, parser="auto")
     y = y.astype(int)
     X, y = preprocess_mnist(X, y, max_samples=max_samples)
+    print(f"MNIST y distribution: {np.bincount(y) / y.shape[0]}")
     return X, y, "multiclass"
 
 

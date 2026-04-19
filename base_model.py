@@ -5,6 +5,7 @@ Weak learners used by ensemble methods.
 from sklearn.linear_model import Ridge, LogisticRegression
 from sklearn.svm import SVC, SVR
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.naive_bayes import GaussianNB, MultinomialNB
 import argparse
 
 def make_base_estimator(max_depth: int = 1) -> DecisionTreeClassifier:
@@ -31,6 +32,11 @@ def make_ridge(alpha: float = 1.0) -> Ridge:
 def make_lr(C: float = 1.0) -> LogisticRegression:
     return LogisticRegression(C=C)
 
+def make_nb(var_smoothing: float = 1e-9) -> GaussianNB:
+    return GaussianNB(var_smoothing=var_smoothing)
+
+def make_mnb(alpha: float = 1.0) -> MultinomialNB:
+    return MultinomialNB(alpha=alpha)
 
 def get_base_model(
     args: argparse.Namespace,
@@ -55,5 +61,15 @@ def get_base_model(
             raise ValueError(f"LogisticRegression can only be used for classification")
         else:
             return make_lr(C=args.C)
+    elif args.base_model == "NB":
+        if args.task == "regression":
+            raise ValueError(f"GaussianNB can only be used for classification")
+        else:
+            return make_nb(var_smoothing=args.var_smoothing)
+    elif args.base_model == "MNB":
+        if args.task == "regression":
+            raise ValueError(f"MultinomialNB can only be used for classification")
+        else:
+            return make_mnb(alpha=args.alpha)
     else:
         raise ValueError(f"Unknown base model: {args.base_model}")

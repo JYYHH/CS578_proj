@@ -16,6 +16,7 @@ from sklearn.metrics import (
     mean_squared_error,
     r2_score,
     roc_auc_score,
+    confusion_matrix,
 )
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
@@ -145,10 +146,11 @@ def evaluate_binary(
 
 def evaluate_multiclass(
     y_true: np.ndarray, y_pred: np.ndarray
-) -> Tuple[float, float]:
-    """Accuracy only"""
+) -> Tuple[float, np.ndarray]:
+    """Accuracy & the confusion matrix"""
     acc = accuracy_score(y_true, y_pred)
-    return acc
+    cm = confusion_matrix(y_true, y_pred)
+    return acc, cm
 
 
 def evaluate_regression(

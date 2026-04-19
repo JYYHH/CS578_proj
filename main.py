@@ -24,7 +24,9 @@ from utils import (
     get_train_err,
     split_train_test,
 )
+from sklearn.metrics import ConfusionMatrixDisplay
 from base_model import get_base_model
+import matplotlib.pyplot as plt
 
 def get_model(args: argparse.Namespace, base_model: DecisionTreeClassifier | SVC | SVR | Ridge): 
     # TODO: return the correct model based on the method and task type
@@ -58,12 +60,14 @@ def parse_args():
         "--base_model", 
         type=str, 
         default="DecisionTree",
-        help="DecisionTree | SVM | Ridge | LR"
+        help="DecisionTree | SVM | Ridge | LR | NB | MNB"
+        # LR is LogisticRegression, NB is GaussianNB, MNB is MultinomialNB
     )
     p.add_argument("--kernel", type=str, default="rbf", help="rbf | linear | poly | sigmoid")
     p.add_argument("--C", type=float, default=1.0, help="Regularization parameter for SVM/LogisticRegression")
     p.add_argument("--epsilon", type=float, default=0.1, help="Epsilon-insensitive loss for SVR")
-    p.add_argument("--alpha", type=float, default=1.0, help="Regularization parameter for Ridge")
+    p.add_argument("--alpha", type=float, default=1.0, help="Regularization parameter for Ridge ; Additive Smoothing parameter for MNB")
+    p.add_argument("--var_smoothing", type=float, default=1e-9, help="Portion of the largest variance of all features that is added to variances for calculation stability, for NB")
     p.add_argument("--n_estimators", type=int, default=100)
     p.add_argument("--max_depth", type=int, default=1)
     p.add_argument("--test_size", type=float, default=0.2)
@@ -83,6 +87,16 @@ def main():
     # Parse arguments
     args = parse_args()
     mnist_max = 0 if args.mnist_max_samples == 0 else args.mnist_max_samples
+
+    base_model_synthetic_name = args.base_model.replace(" ", "_")
+    if args.base_model == "DecisionTree":
+        base_model_synthetic_name += f"_depth_{args.max_depth}"
+    elif args.base_model == "Ridge" or args.base_model == "MNB":
+        base_model_synthetic_name += f"_alpha_{args.alpha}"
+    elif args.base_model == "LR":
+        base_model_synthetic_name += f"_C_{args.C}"
+    elif args.base_model == "NB":
+        base_model_synthetic_name += f"_var_smoothing_{args.var_smoothing}"
 
     # Load dataset
     X, y, task = load_dataset(
@@ -119,26 +133,39 @@ def main():
     model = get_model(args, base_model)
     model.fit(X_train, y_train, X_test=X_test, y_test=y_test)
     y_pred = model.predict(X_test)
+    out_file_name = f"./log/{args.method}_{args.dataset}_{base_model_synthetic_name}.log"
+    outf = open(out_file_name, "w")
     if task == "binary":
         y_scores = model.predict_score(X_test)
         acc, auc = evaluate_binary(y_test, y_pred, y_scores)
         print(f"Test Accuracy : {acc:.4f}")
         print(f"Test AUC-ROC  : {auc:.4f}")
+        outf.write(f"Test Accuracy : {acc:.4f}\n")
+        outf.write(f"Test AUC-ROC  : {auc:.4f}\n")
     elif task == "multiclass":
-        acc = evaluate_multiclass(y_test, y_pred)
+        acc, cm = evaluate_multiclass(y_test, y_pred)
         print(f"Test Accuracy : {acc:.4f}")
+        outf.write(f"Test Accuracy : {acc:.4f}\n")
+        disp = ConfusionMatrixDisplay(confusion_matrix=cm)
+        disp.plot()
+        plt.savefig(f"./fig/{args.method}_{args.dataset}_{base_model_synthetic_name}_confusion_matrix.png")
+        plt.close()
     else: 
         mse, mae, r2 = evaluate_regression(y_test, y_pred)
         print(f"Test MSE : {mse:.6g}")
         print(f"Test MAE : {mae:.6g}")
         print(f"Test R^2 : {r2:.4f}")
+        outf.write(f"Test MSE : {mse:.6g}\n")
+        outf.write(f"Test MAE : {mae:.6g}\n")
+        outf.write(f"Test R^2 : {r2:.4f}\n")
     
     train_err, test_err = get_train_err(model, X_train, y_train, X_test, y_test, task, args.method)
+
     plot_error_curves(
         train_err,
         test_err,
         title=f"{args.method}: {'MSE' if task == 'regression' else 'Error'} vs. rounds ({args.dataset})",
-        outfile=f"{args.method}_{args.dataset}_error_curve.png",
+        outfile=f"./fig/{args.method}_{args.dataset}_{base_model_synthetic_name}_error_curve.png",
         ylabel="MSE" if task == "regression" else "Error",
     )
 
