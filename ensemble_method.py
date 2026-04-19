@@ -99,7 +99,11 @@ class AdaBoostMulticlassClassifier:
             eps = np.clip(eps, 1e-10, 1 - 1e-10)
             
             # SAMME formula, we only need to do better than random guessing
-            alpha = np.log((1 - eps) / eps) + np.log(self.class_num - 1) 
+            alpha = np.log((1 - eps) / eps) + np.log(self.class_num - 1)
+
+            if alpha <= 0:
+                print(f"  Early stop at round {t + 1}: alpha={alpha:.4f} (weak learner no better than chance)")
+                break
 
             weights = weights * np.exp(alpha * (predictions != y))
             weights /= weights.sum()
