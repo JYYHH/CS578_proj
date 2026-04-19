@@ -24,20 +24,21 @@ from utils import (
     get_train_err,
     split_train_test,
 )
+from base_model import get_base_model
 
-def get_model(method: str, task_type: str, args: argparse.Namespace, class_num: int = 2): 
+def get_model(args: argparse.Namespace, base_model: DecisionTreeClassifier | SVC | SVR | Ridge): 
     # TODO: return the correct model based on the method and task type
-    if method == "AdaBoost":
-        if task_type == "binary":
-            return AdaBoostBinaryClassifier(n_estimators=args.n_estimators, max_depth=args.max_depth)
-        elif task_type == "multiclass":
-            return AdaBoostMulticlassClassifier(n_estimators=args.n_estimators, max_depth=args.max_depth, class_num=class_num)
-        elif task_type == "regression":
-            return AdaBoostRegressor(n_estimators=args.n_estimators, max_depth=args.max_depth)
+    if args.method == "AdaBoost":
+        if args.task == "binary":
+            return AdaBoostBinaryClassifier(n_estimators=args.n_estimators, max_depth=args.max_depth, base_model=base_model)
+        elif args.task == "multiclass":
+            return AdaBoostMulticlassClassifier(n_estimators=args.n_estimators, max_depth=args.max_depth, class_num=args.class_num, base_model=base_model)
+        elif args.task == "regression":
+            return AdaBoostRegressor(n_estimators=args.n_estimators, max_depth=args.max_depth, base_model=base_model)
         else:
-            raise ValueError(f"Unknown task type: {task_type}")
+            raise ValueError(f"Unknown task type: {args.task}")
     else:
-        raise ValueError(f"Unknown method: {method}")
+        raise ValueError(f"Unknown method: {args.method}")
 
 def parse_args():
     p = argparse.ArgumentParser(description="AdaBoost ensemble on tabular / MNIST data")
@@ -53,6 +54,16 @@ def parse_args():
         default="AdaBoost",
         help="AdaBoost | RandomForest | XGBoost | ...", # TODO: add your methods' names here
     )
+    p.add_argument(
+        "--base_model", 
+        type=str, 
+        default="DecisionTree",
+        help="DecisionTree | SVM | Ridge"
+    )
+    p.add_argument("--kernel", type=str, default="rbf", help="rbf | linear | poly | sigmoid")
+    p.add_argument("--C", type=float, default=1.0, help="Regularization parameter for SVM")
+    p.add_argument("--epsilon", type=float, default=0.1, help="Epsilon-insensitive loss for SVR")
+    p.add_argument("--alpha", type=float, default=1.0, help="Regularization parameter for Ridge")
     p.add_argument("--n_estimators", type=int, default=100)
     p.add_argument("--max_depth", type=int, default=1)
     p.add_argument("--test_size", type=float, default=0.2)
@@ -78,6 +89,7 @@ def main():
         args.dataset,
         mnist_max_samples=mnist_max,
     )
+    args.task = task
 
     # Split dataset into train and test sets
     stratify = task in ("binary", "multiclass") and not args.no_stratify
@@ -101,7 +113,10 @@ def main():
 
     # Main Logic, train and test
     class_num = int(np.max(y)) + 1 if task == "multiclass" else 2
-    model = get_model(args.method, task, args, class_num)
+    args.class_num = class_num
+
+    base_model = get_base_model(args)
+    model = get_model(args, base_model)
     model.fit(X_train, y_train, X_test=X_test, y_test=y_test)
     y_pred = model.predict(X_test)
     if task == "binary":

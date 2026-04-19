@@ -7,9 +7,7 @@ from __future__ import annotations
 import numpy as np
 from sklearn.metrics import accuracy_score
 from sklearn.ensemble import AdaBoostRegressor as sklearn_AdaBoostRegressor
-
-from base_model import make_base_estimator, make_base_regressor
-
+from sklearn.base import clone
 
 class AdaBoostBinaryClassifier:
     """
@@ -18,9 +16,10 @@ class AdaBoostBinaryClassifier:
     Weak learners are decision trees from ``make_base_estimator(max_depth)``.
     """
 
-    def __init__(self, n_estimators: int = 50, max_depth: int = 1):
+    def __init__(self, base_model, n_estimators: int = 50, max_depth: int = 1):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
+        self.base_model = base_model
         self.alphas: list = []
         self.learners: list = []
         self.train_errors: list = []
@@ -31,7 +30,7 @@ class AdaBoostBinaryClassifier:
         weights = np.ones(n) / n
 
         for t in range(self.n_estimators):
-            stump = make_base_estimator(max_depth = self.max_depth)
+            stump = clone(self.base_model)
             stump.fit(X, y, sample_weight = weights)
 
             predictions = stump.predict(X)
@@ -58,6 +57,7 @@ class AdaBoostBinaryClassifier:
                     f"eps={eps:.4f} | alpha={alpha:.4f} | "
                     f"train_err={self.train_errors[-1]:.4f}"
                 )
+            print(f"Round {t + 1}/{self.n_estimators} | eps={eps:.4f} | alpha={alpha:.4f} | train_err={self.train_errors[-1]:.4f}")
 
     def predict_score(self, X):
         scores = np.zeros(X.shape[0])
@@ -76,10 +76,11 @@ class AdaBoostMulticlassClassifier:
     Weak learners are decision trees from ``make_base_estimator(max_depth)``.
     """
 
-    def __init__(self, n_estimators: int = 50, max_depth: int = 1, class_num: int = 2):
+    def __init__(self, base_model, n_estimators: int = 50, max_depth: int = 1, class_num: int = 2):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.class_num = class_num
+        self.base_model = base_model
         self.alphas: list = []
         self.learners: list = []
         self.train_errors: list = []
@@ -90,7 +91,7 @@ class AdaBoostMulticlassClassifier:
         weights = np.ones(n) / n
 
         for t in range(self.n_estimators):
-            stump = make_base_estimator(max_depth = self.max_depth)
+            stump = clone(self.base_model)
             stump.fit(X, y, sample_weight = weights)
 
             predictions = stump.predict(X)
@@ -135,9 +136,10 @@ class AdaBoostMulticlassClassifier:
 class AdaBoostRegressor(sklearn_AdaBoostRegressor):
     """AdaBoost.R2 with decision tree regressors (sklearn implementation)."""
 
-    def __init__(self, n_estimators: int = 50, max_depth: int = 1):
+    def __init__(self, base_model, n_estimators: int = 50, max_depth: int = 1):
         # sklearn get_params() hard limits 
         self.max_depth = max_depth
+        self.base_model = base_model
         '''
             The maximum number of estimators at which boosting is terminated.
             In case of perfect fit, the learning procedure is stopped early.
@@ -145,7 +147,7 @@ class AdaBoostRegressor(sklearn_AdaBoostRegressor):
         self.n_estimators = n_estimators 
         
         super().__init__(
-            estimator = make_base_regressor(max_depth = max_depth),
+            estimator = clone(self.base_model),
             n_estimators = n_estimators,
         )
     def fit(self, X, y, X_test = None, y_test = None):
