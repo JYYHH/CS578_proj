@@ -53,7 +53,8 @@ def preprocess_communities_crime(df: pd.DataFrame) -> Tuple[np.ndarray, np.ndarr
     target is last column ViolentCrimesPerPop (real-valued, normalized in UCI).
     """
     df = df.replace("?", np.nan)
-    num = df.iloc[:, 5:].apply(pd.to_numeric, errors="coerce").dropna()
+    num = df.iloc[:, 5:].apply(pd.to_numeric, errors="coerce")
+    num = num.drop(columns=num.columns[num.isna().any()]).dropna()
     y = num.iloc[:, -1].values.astype(float)
     X = num.iloc[:, :-1].values.astype(float)
     return X, y

@@ -34,48 +34,47 @@ def _default_kaggle_dir() -> Path:
     return Path(__file__).resolve().parent / "data" # "./data/"
 
 
+def _cache_path(filename: str) -> Path:
+    p = _default_kaggle_dir() / "uci_cache"
+    p.mkdir(parents=True, exist_ok=True)
+    return p / filename
+
+
 def load_adult() -> Tuple[np.ndarray, np.ndarray, TaskType]:
     col_names = [
-        "age",
-        "workclass",
-        "fnlwgt",
-        "education",
-        "education-num",
-        "marital-status",
-        "occupation",
-        "relationship",
-        "race",
-        "sex",
-        "capital-gain",
-        "capital-loss",
-        "hours-per-week",
-        "native-country",
-        "income",
+        "age", "workclass", "fnlwgt", "education", "education-num",
+        "marital-status", "occupation", "relationship", "race", "sex",
+        "capital-gain", "capital-loss", "hours-per-week", "native-country", "income",
     ]
-    print("Loading UCI Adult (download if needed)...")
-    train_df = pd.read_csv(
-        ADULT_TRAIN_URL,
-        header=None,
-        names=col_names,
-        na_values=" ?",
-        skipinitialspace=True,
-    )
-    test_df = pd.read_csv(
-        ADULT_TEST_URL,
-        header=None,
-        names=col_names,
-        na_values=" ?",
-        skipinitialspace=True,
-        skiprows=1,
-    )
-    df = pd.concat([train_df, test_df], ignore_index=True)
+    cache = _cache_path("adult.csv")
+    if cache.is_file():
+        print("Loading UCI Adult (from cache)...")
+        df = pd.read_csv(cache)
+    else:
+        print("Loading UCI Adult (downloading)...")
+        train_df = pd.read_csv(
+            ADULT_TRAIN_URL, header=None, names=col_names,
+            na_values=" ?", skipinitialspace=True,
+        )
+        test_df = pd.read_csv(
+            ADULT_TEST_URL, header=None, names=col_names,
+            na_values=" ?", skipinitialspace=True, skiprows=1,
+        )
+        df = pd.concat([train_df, test_df], ignore_index=True)
+        df.to_csv(cache, index=False)
     X, y = preprocess_adult(df)
     return X, y, "binary"
 
 
 def load_communities_crime() -> Tuple[np.ndarray, np.ndarray, TaskType]:
-    print("Loading UCI Communities and Crime (download if needed)...")
-    df = pd.read_csv(COMMUNITIES_URL, header=None, na_values="?")
+    cache = _cache_path("communities_crime.csv")
+    if cache.is_file():
+        print("Loading UCI Communities and Crime (from cache)...")
+        df = pd.read_csv(cache, header=None)
+    else:
+        print("Loading UCI Communities and Crime (downloading)...")
+        df = pd.read_csv(COMMUNITIES_URL, header=None, na_values="?")
+        df.to_csv(cache, index=False)
     X, y = preprocess_communities_crime(df)
     return X, y, "regression"
 
