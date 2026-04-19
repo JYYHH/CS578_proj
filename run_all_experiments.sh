@@ -6,7 +6,6 @@ set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 ENTRYPOINT="${ENTRYPOINT:-main.py}"
-BAGGING_ENTRYPOINT="${BAGGING_ENTRYPOINT:-bagging_method.py}"
 
 # Datasets grouped by task type (used to skip invalid base-model/task combos).
 BINARY_DATASETS=(
@@ -24,6 +23,7 @@ REGRESSION_DATASETS=(
 
 # Methods
 METHODS=(
+  "Single"
   "AdaBoost"
   "Bagging"
 )
@@ -51,7 +51,7 @@ BASE_MODEL_SPECS=(
   "Ridge|reg|--alpha 1.0"
   "Ridge|reg|--alpha 3.0"
   "Ridge|reg|--alpha 10.0"
-  "LR|class|--C 1.0"
+  # "LR|class|--C 1.0"
   "NB|class|--var_smoothing 1e-9"
   "MNB|class|--alpha 0.1"
   "MNB|class|--alpha 0.3"

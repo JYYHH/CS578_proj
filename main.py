@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """
 Train an ensemble method on a chosen dataset and report metrics + error curves.
-Supports: AdaBoost, Bagging
+Supports: Single, AdaBoost, Bagging
 """
 
 from __future__ import annotations
 
 import argparse
+import math
 import os
 
 import numpy as np
@@ -37,7 +38,12 @@ from base_model import get_base_model
 import matplotlib.pyplot as plt
 
 
-BAGGING_RESULTS_DIR = "bagging_results"
+ADABOOST_RESULTS_DIR = "adaboost_results"
+BAGGING_RESULTS_DIR  = "bagging_results"
+SINGLE_RESULTS_DIR   = "single_results"
+
+# Methods whose fit() does not take staged X_test/y_test callbacks
+INDEPENDENT_FIT_METHODS = {"Bagging", "Single"}
 
 
 def get_model(args: argparse.Namespace, base_model):
@@ -71,6 +77,9 @@ def get_model(args: argparse.Namespace, base_model):
             random_state=args.seed,
         )
 
+    elif args.method == "Single":
+        return base_model
+
     else:
         raise ValueError(f"Unknown method: {args.method}")
 
@@ -80,7 +89,7 @@ def parse_args():
     p.add_argument("--dataset", type=str, default="adult",
                    help="adult | communities_crime | mnist | ca_housing | allstate | sberbank")
     p.add_argument("--method", type=str, default="AdaBoost",
-                   help="AdaBoost | Bagging")
+                   help="Single | AdaBoost | Bagging")
     p.add_argument("--base_model", type=str, default="DecisionTree",
                    help="DecisionTree | SVM | Ridge | LR | NB | MNB")
     p.add_argument("--kernel", type=str, default="rbf")
@@ -112,11 +121,15 @@ def _base_model_tag(args) -> str:
     return name
 
 
-def _save_bagging_row(args, tag, metrics: dict):
-    os.makedirs(BAGGING_RESULTS_DIR, exist_ok=True)
-    path = os.path.join(BAGGING_RESULTS_DIR, f"{args.dataset}_{tag}.csv")
+def results_dir(method: str) -> str:
+    return {"Bagging": BAGGING_RESULTS_DIR, "AdaBoost": ADABOOST_RESULTS_DIR}.get(method, SINGLE_RESULTS_DIR)
+
+
+def save_row(results_dir, filename, metrics: dict):
+    os.makedirs(results_dir, exist_ok=True)
+    path = os.path.join(results_dir, filename)
     pd.DataFrame([metrics]).to_csv(path, index=False)
-    print(f"Bagging results saved → {path}")
+    print(f"Results saved → {path}")
 
 
 def main():
@@ -146,7 +159,7 @@ def main():
     base_model = get_base_model(args)
     model = get_model(args, base_model)
 
-    if args.method == "Bagging":
+    if args.method in INDEPENDENT_FIT_METHODS:
         model.fit(X_train, y_train)
     else:
         model.fit(X_train, y_train, X_test=X_test, y_test=y_test)
@@ -159,23 +172,22 @@ def main():
     outf = open(log_path, "w")
 
     if task == "binary":
-        if args.method == "Bagging":
-            y_scores = model.predict_proba(X_test)[:, 1]
-        else:
+        if args.method == "AdaBoost":
             y_scores = model.predict_score(X_test)
+        else:
+            y_scores = model.predict_proba(X_test)[:, 1]
         acc, auc = evaluate_binary(y_test, y_pred, y_scores)
         print(f"Test Accuracy : {acc:.4f}")
         print(f"Test AUC-ROC  : {auc:.4f}")
         outf.write(f"Test Accuracy : {acc:.4f}\n")
         outf.write(f"Test AUC-ROC  : {auc:.4f}\n")
 
-        if args.method == "Bagging":
-            train_acc = accuracy_score(y_train, model.predict(X_train))
-            _save_bagging_row(args, tag, dict(
-                learner="bagging", train_err=1 - train_acc, test_err=1 - acc,
-                gen_gap=(1 - acc) - (1 - train_acc), AUC=auc,
-                OOB_acc=model.oob_score_,
-            ))
+        train_acc = accuracy_score(y_train, model.predict(X_train))
+        save_row(results_dir(args.method), f"{args.dataset}_{tag}.csv", dict(
+            learner=args.method, train_err=1 - train_acc, test_err=1 - acc,
+            gen_gap=(1 - acc) - (1 - train_acc), AUC=auc,
+            OOB_acc=getattr(model, "oob_score_", None),
+        ))
 
     elif task == "multiclass":
         acc, cm = evaluate_multiclass(y_test, y_pred)
@@ -186,13 +198,12 @@ def main():
         plt.savefig(f"./fig/{args.method}_{args.dataset}_{tag}_confusion_matrix.png")
         plt.close()
 
-        if args.method == "Bagging":
-            train_acc = accuracy_score(y_train, model.predict(X_train))
-            _save_bagging_row(args, tag, dict(
-                learner="bagging", train_err=1 - train_acc, test_err=1 - acc,
-                gen_gap=(1 - acc) - (1 - train_acc), AUC=None,
-                OOB_acc=model.oob_score_,
-            ))
+        train_acc = accuracy_score(y_train, model.predict(X_train))
+        save_row(results_dir(args.method), f"{args.dataset}_{tag}.csv", dict(
+            learner=args.method, train_err=1 - train_acc, test_err=1 - acc,
+            gen_gap=(1 - acc) - (1 - train_acc), AUC=None,
+            OOB_acc=getattr(model, "oob_score_", None),
+        ))
 
     else:
         mse, mae, r2 = evaluate_regression(y_test, y_pred)
@@ -203,19 +214,17 @@ def main():
         outf.write(f"Test MAE : {mae:.6g}\n")
         outf.write(f"Test R^2 : {r2:.4f}\n")
 
-        if args.method == "Bagging":
-            import math
-            train_rmse = math.sqrt(mean_squared_error(y_train, model.predict(X_train)))
-            test_rmse  = math.sqrt(mse)
-            _save_bagging_row(args, tag, dict(
-                learner="bagging", train_RMSE=train_rmse, test_RMSE=test_rmse,
-                gen_gap=test_rmse - train_rmse, R2=r2,
-                OOB_R2=model.oob_score_,
-            ))
+        train_rmse = math.sqrt(mean_squared_error(y_train, model.predict(X_train)))
+        test_rmse  = math.sqrt(mse)
+        save_row(results_dir(args.method), f"{args.dataset}_{tag}.csv", dict(
+            learner=args.method, train_RMSE=train_rmse, test_RMSE=test_rmse,
+            gen_gap=test_rmse - train_rmse, R2=r2,
+            OOB_R2=getattr(model, "oob_score_", None),
+        ))
 
     outf.close()
 
-    if args.method != "Bagging":
+    if args.method == "AdaBoost":
         train_err, test_err = get_train_err(
             model, X_train, y_train, X_test, y_test, task, args.method
         )
