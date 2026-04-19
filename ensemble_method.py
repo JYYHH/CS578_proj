@@ -57,7 +57,7 @@ class AdaBoostBinaryClassifier:
                     f"eps={eps:.4f} | alpha={alpha:.4f} | "
                     f"train_err={self.train_errors[-1]:.4f}"
                 )
-            print(f"Round {t + 1}/{self.n_estimators} | eps={eps:.4f} | alpha={alpha:.4f} | train_err={self.train_errors[-1]:.4f}")
+            # print(f"Round {t + 1}/{self.n_estimators} | eps={eps:.4f} | alpha={alpha:.4f} | train_err={self.train_errors[-1]:.4f}")
 
     def predict_score(self, X):
         scores = np.zeros(X.shape[0])

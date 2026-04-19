@@ -58,10 +58,10 @@ def parse_args():
         "--base_model", 
         type=str, 
         default="DecisionTree",
-        help="DecisionTree | SVM | Ridge"
+        help="DecisionTree | SVM | Ridge | LR"
     )
     p.add_argument("--kernel", type=str, default="rbf", help="rbf | linear | poly | sigmoid")
-    p.add_argument("--C", type=float, default=1.0, help="Regularization parameter for SVM")
+    p.add_argument("--C", type=float, default=1.0, help="Regularization parameter for SVM/LogisticRegression")
     p.add_argument("--epsilon", type=float, default=0.1, help="Epsilon-insensitive loss for SVR")
     p.add_argument("--alpha", type=float, default=1.0, help="Regularization parameter for Ridge")
     p.add_argument("--n_estimators", type=int, default=100)
