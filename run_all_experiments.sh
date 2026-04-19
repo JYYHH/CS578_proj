@@ -6,6 +6,7 @@ set -euo pipefail
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 ENTRYPOINT="${ENTRYPOINT:-main.py}"
+BAGGING_ENTRYPOINT="${BAGGING_ENTRYPOINT:-bagging_method.py}"
 
 # Datasets grouped by task type (used to skip invalid base-model/task combos).
 BINARY_DATASETS=(
@@ -21,9 +22,10 @@ REGRESSION_DATASETS=(
   # "sberbank"
 )
 
-# Methods (currently AdaBoost only, but structure is extendable).
+# Methods
 METHODS=(
   "AdaBoost"
+  "Bagging"
 )
 
 # Shared runtime args.
