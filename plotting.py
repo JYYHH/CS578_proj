@@ -135,7 +135,7 @@ def plot_depth_comparison(df: pd.DataFrame):
         ax.set_title(DATASET_LABELS[dataset])
         ax.legend(fontsize=8)
 
-    fig.suptitle("Single vs AdaBoost vs Bagging — Decision Tree base learner", fontsize=12)
+    fig.suptitle("Single vs AdaBoost vs Bagging vs GradBoost — Decision Tree base learner", fontsize=12)
     plt.tight_layout()
     _savefig("depth_comparison.png")
 
@@ -169,7 +169,7 @@ def plot_ridge_comparison(df: pd.DataFrame):
         ax.set_title(DATASET_LABELS[dataset])
         ax.legend(fontsize=8)
 
-    fig.suptitle("Single vs AdaBoost vs Bagging — Ridge base learner", fontsize=12)
+    fig.suptitle("Single vs AdaBoost vs Bagging vs GradBoost — Ridge base learner", fontsize=12)
     plt.tight_layout()
     _savefig("ridge_comparison.png")
 
@@ -211,6 +211,40 @@ def plot_gen_gap(df: pd.DataFrame):
 
 
 # ---------------------------------------------------------------------------
+# Figure 4: MNB — test AUC vs alpha, all datasets
+# ---------------------------------------------------------------------------
+
+def plot_mnb_comparison(df: pd.DataFrame):
+    sub = df[df["model"] == "MNB"].copy()
+    sub["alpha"] = sub["value"].astype(float)
+
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    axes = axes.flatten()
+
+    for ax, dataset in zip(axes, ["adult", "mnist"]):
+        dset = sub[sub["dataset"] == dataset]
+
+        for method, style in METHOD_STYLE.items():
+            mdf = (dset[dset["method"] == method]
+                   .set_index("alpha")["test_err"]
+                   .reindex(ALPHA_ORDER)
+                   .dropna())
+            if mdf.empty:
+                continue
+            ax.plot(range(len(mdf)), mdf.values, label=method, **style)
+
+        ax.set_xticks(range(len(ALPHA_ORDER)))
+        ax.set_xticklabels([str(a) for a in ALPHA_ORDER])
+        ax.set_xlabel("alpha")
+        ax.set_ylabel("Test Error")
+        ax.set_title(DATASET_LABELS[dataset])
+        ax.legend(fontsize=8)
+
+    fig.suptitle("Single vs AdaBoost vs Bagging vs GradBoost — Multinomial Naive Bayes base learner", fontsize=12)
+    plt.tight_layout()
+    _savefig("mnb_comparison.png")
+
+
 # Main
 # ---------------------------------------------------------------------------
 
@@ -225,6 +259,7 @@ def main():
 
     plot_depth_comparison(df)
     plot_ridge_comparison(df)
+    plot_mnb_comparison(df)
     plot_gen_gap(df)
 
 
