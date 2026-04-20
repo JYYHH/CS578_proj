@@ -92,7 +92,7 @@ def _metric(dataset: str):
     """Return (column, label, higher_is_better)."""
     if dataset in ("adult", "mnist"):
         return "test_err", "Test Error", False
-    return "R2", "Test R²", True
+    return "R2", "1 − R²", False
 
 
 def _savefig(name: str):
@@ -125,7 +125,8 @@ def plot_depth_comparison(df: pd.DataFrame):
                    .dropna())
             if mdf.empty:
                 continue
-            ax.plot(range(len(mdf)), mdf.values, label=method, **style)
+            values = (1 - mdf.values) if col == "R2" else mdf.values
+            ax.plot(range(len(mdf)), values, label=method, **style)
 
         ax.set_xticks(range(len(DEPTH_ORDER)))
         ax.set_xticklabels([DEPTH_LABELS.get(d, str(d)) for d in DEPTH_ORDER])
@@ -159,12 +160,12 @@ def plot_ridge_comparison(df: pd.DataFrame):
                    .dropna())
             if mdf.empty:
                 continue
-            ax.plot(range(len(mdf)), mdf.values, label=method, **style)
+            ax.plot(range(len(mdf)), 1 - mdf.values, label=method, **style)
 
         ax.set_xticks(range(len(ALPHA_ORDER)))
         ax.set_xticklabels([str(a) for a in ALPHA_ORDER])
         ax.set_xlabel("α (regularization)")
-        ax.set_ylabel("Test R²")
+        ax.set_ylabel("1 − R²")
         ax.set_title(DATASET_LABELS[dataset])
         ax.legend(fontsize=8)
 
