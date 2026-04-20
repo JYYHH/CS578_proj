@@ -26,6 +26,7 @@ METHODS=(
   "Single"
   "AdaBoost"
   "Bagging"
+  "GradBoost"
 )
 
 # Shared runtime args.
