@@ -34,13 +34,20 @@ from utils import (
     get_train_err,
     split_train_test,
 )
+
+from gb_methods import (
+    GBMachine,
+    XGBoostWrapper
+)
+
 from base_model import get_base_model
 import matplotlib.pyplot as plt
 
 
-ADABOOST_RESULTS_DIR = "adaboost_results"
-BAGGING_RESULTS_DIR  = "bagging_results"
-SINGLE_RESULTS_DIR   = "single_results"
+GRADBOOST_RESULTS_DIR = "gradboost_results"
+ADABOOST_RESULTS_DIR  = "adaboost_results"
+BAGGING_RESULTS_DIR   = "bagging_results"
+SINGLE_RESULTS_DIR    = "single_results"
 
 # Methods whose fit() does not take staged X_test/y_test callbacks
 INDEPENDENT_FIT_METHODS = {"Bagging", "Single"}
@@ -80,6 +87,27 @@ def get_model(args: argparse.Namespace, base_model):
     elif args.method == "Single":
         return base_model
 
+    elif args.method == "GradBoost":
+        loss = "lad" if args.task in ("binary", "multiclass") else "ls"
+        return GBMachine(
+            base_model=base_model,
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            loss=loss,
+            task=args.task,
+        )
+
+    elif args.method == "XGBoost":
+        loss = "lad" if args.task in ("binary", "multiclass") else "ls"
+        return XGBoostWrapper(
+            base_model=base_model,
+            n_estimators=args.n_estimators,
+            max_depth=args.max_depth,
+            learning_rate=args.learning_rate,
+            loss=loss,
+            task=args.task,
+        )
+
     else:
         raise ValueError(f"Unknown method: {args.method}")
 
@@ -89,7 +117,7 @@ def parse_args():
     p.add_argument("--dataset", type=str, default="adult",
                    help="adult | communities_crime | mnist | ca_housing | allstate | sberbank")
     p.add_argument("--method", type=str, default="AdaBoost",
-                   help="Single | AdaBoost | Bagging")
+                   help="Single | AdaBoost | Bagging | GradBoost | XGBoost")
     p.add_argument("--base_model", type=str, default="DecisionTree",
                    help="DecisionTree | SVM | Ridge | LR | NB | MNB")
     p.add_argument("--kernel", type=str, default="rbf")
@@ -100,6 +128,7 @@ def parse_args():
     p.add_argument("--var_smoothing", type=float, default=1e-9)
     p.add_argument("--n_estimators", type=int, default=100)
     p.add_argument("--max_depth", type=int, default=1)
+    p.add_argument("--learning_rate", type=float, default=0.1)
     p.add_argument("--test_size", type=float, default=0.2)
     p.add_argument("--seed", type=int, default=42)
     p.add_argument("--no_stratify", action="store_true")
@@ -122,14 +151,19 @@ def _base_model_tag(args) -> str:
 
 
 def results_dir(method: str) -> str:
-    return {"Bagging": BAGGING_RESULTS_DIR, "AdaBoost": ADABOOST_RESULTS_DIR}.get(method, SINGLE_RESULTS_DIR)
+    return {
+        "Bagging": BAGGING_RESULTS_DIR,
+        "AdaBoost": ADABOOST_RESULTS_DIR,
+        "GradBoost": GRADBOOST_RESULTS_DIR,
+        "XGBoost": GRADBOOST_RESULTS_DIR,
+    }.get(method, SINGLE_RESULTS_DIR)
 
 
 def save_row(results_dir, filename, metrics: dict):
     os.makedirs(results_dir, exist_ok=True)
     path = os.path.join(results_dir, filename)
     pd.DataFrame([metrics]).to_csv(path, index=False)
-    print(f"Results saved → {path}")
+    print(f"Results saved -> {path}")
 
 
 def main():
@@ -172,10 +206,10 @@ def main():
     outf = open(log_path, "w")
 
     if task == "binary":
-        if args.method == "AdaBoost":
-            y_scores = model.predict_score(X_test)
-        else:
+        if hasattr(model, "predict_proba"):
             y_scores = model.predict_proba(X_test)[:, 1]
+        else:
+            y_scores = model.predict_score(X_test)
         acc, auc = evaluate_binary(y_test, y_pred, y_scores)
         print(f"Test Accuracy : {acc:.4f}")
         print(f"Test AUC-ROC  : {auc:.4f}")
@@ -224,7 +258,7 @@ def main():
 
     outf.close()
 
-    if args.method == "AdaBoost":
+    if args.method in ("AdaBoost", "GradBoost", "XGBoost"):
         train_err, test_err = get_train_err(
             model, X_train, y_train, X_test, y_test, task, args.method
         )

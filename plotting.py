@@ -7,7 +7,7 @@ Usage:
 
 import os
 import pandas as pd
-from main import ADABOOST_RESULTS_DIR, BAGGING_RESULTS_DIR, SINGLE_RESULTS_DIR
+from main import ADABOOST_RESULTS_DIR, BAGGING_RESULTS_DIR, SINGLE_RESULTS_DIR, GRADBOOST_RESULTS_DIR
 
 
 def load_results(results_dir: str, method: str) -> pd.DataFrame:
@@ -28,6 +28,7 @@ def main():
         (SINGLE_RESULTS_DIR,   "Single"),
         (ADABOOST_RESULTS_DIR, "AdaBoost"),
         (BAGGING_RESULTS_DIR,  "Bagging"),
+        (GRADBOOST_RESULTS_DIR, "GradBoost")
     ]:
         if os.path.isdir(d):
             df = load_results(d, method)

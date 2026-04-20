@@ -178,6 +178,8 @@ def get_train_err(
                 test_err.append(mean_squared_error(y_test, pred_te))
         else:
             train_err, test_err = model.train_errors, model.test_errors
+    elif method_name in ("GradBoost", "XGBoost"):
+        train_err, test_err = model.train_errors, model.test_errors
     else:
         raise ValueError(f"Unknown method: {method_name}")
     return train_err, test_err
