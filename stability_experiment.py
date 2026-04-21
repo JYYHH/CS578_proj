@@ -4,9 +4,9 @@ Empirical LOO instability experiments.
 Measures beta-hat = (1/m) sum_i mean_{z in S_test} |L(A(S), z) - L(A(S\\i), z)|
 
 Usage:
-  python stability_experiment.py            # run all experiments + plot
+  python stability_experiment.py              # run all experiments + plot
   python stability_experiment.py --plot_only  # reload JSON + re-plot
-  python stability_experiment.py --max_loo 200  # limit LOO iterations (faster)
+  python stability_experiment.py --max_loo 200
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.linear_model import Ridge
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 from sklearn.utils.parallel import Parallel, delayed
 
@@ -35,11 +35,17 @@ RESULTS_FILE = "stability_results.json"
 PLOTS_DIR    = "plots"
 
 DATASET_TITLES = {
-    "adult":            "Adult Income",
-    "mnist":            "MNIST",
-    "ca_housing":       "California Housing",
-    "communities_crime":"Communities & Crime",
+    "adult":        "Adult Income",
+    "mnist":        "MNIST",
+    "ca_housing":   "California Housing",
+    "communities":  "Communities & Crime",
 }
+
+# Hyperparameter sweeps — must match values already in stability_results.json
+SVC_C_VALUES    = [0.01, 0.1, 1.0, 10.0]
+RF_N_ESTIMATORS = [10, 50, 100, 200]
+RIDGE_ALPHAS    = [0.01, 0.1, 1.0, 10.0, 100.0]
+TREE_DEPTHS     = [1, 3, 5, 10, None]
 
 
 # ---------------------------------------------------------------------------
@@ -50,8 +56,7 @@ def _iqr(a: np.ndarray):
     return float(np.percentile(a, 25)), float(np.percentile(a, 75))
 
 
-def _iqr_errbar(mean: float, q25: float, q75: float):
-    """Asymmetric errbar for matplotlib: [[lower], [upper]], clamped ≥ 0."""
+def _iqr_errbar(mean, q25, q75):
     return [[max(0.0, mean - q25)], [max(0.0, q75 - mean)]]
 
 
@@ -72,16 +77,15 @@ def _loo_delta_reg(i, factory, X_train, y_train, X_test, y_test, pred_full):
     m = factory()
     m.fit(X_train[idx], y_train[idx])
     pred_loo = m.predict(X_test)
-    sq_full  = (pred_full - y_test) ** 2
-    sq_loo   = (pred_loo  - y_test) ** 2
-    ab_full  = np.abs(pred_full - y_test)
-    ab_loo   = np.abs(pred_loo  - y_test)
+    sq_full = (pred_full - y_test) ** 2
+    sq_loo  = (pred_loo  - y_test) ** 2
+    ab_full = np.abs(pred_full - y_test)
+    ab_loo  = np.abs(pred_loo  - y_test)
     return float(np.mean(np.abs(sq_full - sq_loo))), float(np.mean(np.abs(ab_full - ab_loo)))
 
 
 def measure_stability_clf(factory, X_train, y_train, X_test, y_test,
                           max_loo=None, n_jobs=-1):
-    """Returns (mean, q25, q75) of per-sample LOO instability."""
     rng = np.random.default_rng(42)
     indices = np.arange(len(X_train))
     if max_loo is not None and max_loo < len(indices):
@@ -91,7 +95,7 @@ def measure_stability_clf(factory, X_train, y_train, X_test, y_test,
     model_full.fit(X_train, y_train)
     loss_full = (model_full.predict(X_test) != y_test).astype(float)
 
-    deltas = Parallel(n_jobs=n_jobs)(
+    deltas = Parallel(n_jobs=n_jobs, prefer="processes")(
         delayed(_loo_delta_clf)(i, factory, X_train, y_train, X_test, y_test, loss_full)
         for i in indices
     )
@@ -102,7 +106,6 @@ def measure_stability_clf(factory, X_train, y_train, X_test, y_test,
 
 def measure_stability_reg(factory, X_train, y_train, X_test, y_test,
                           max_loo=None, n_jobs=-1):
-    """Returns (mean_sq, q25_sq, q75_sq, mean_abs, q25_abs, q75_abs)."""
     rng = np.random.default_rng(42)
     indices = np.arange(len(X_train))
     if max_loo is not None and max_loo < len(indices):
@@ -112,105 +115,83 @@ def measure_stability_reg(factory, X_train, y_train, X_test, y_test,
     model_full.fit(X_train, y_train)
     pred_full = model_full.predict(X_test)
 
-    results = Parallel(n_jobs=n_jobs)(
+    results = Parallel(n_jobs=n_jobs, prefer="processes")(
         delayed(_loo_delta_reg)(i, factory, X_train, y_train, X_test, y_test, pred_full)
         for i in indices
     )
-    sq  = np.array([r[0] for r in results])
-    ab  = np.array([r[1] for r in results])
+    sq = np.array([r[0] for r in results])
+    ab = np.array([r[1] for r in results])
     q25_sq, q75_sq = _iqr(sq)
     q25_ab, q75_ab = _iqr(ab)
     return float(sq.mean()), q25_sq, q75_sq, float(ab.mean()), q25_ab, q75_ab
 
 
 # ---------------------------------------------------------------------------
-# Experiment configs
+# Experiment runners — save in flat {label: metrics} format
 # ---------------------------------------------------------------------------
-
-SVC_C_VALUES      = [0.01, 0.1, 1.0, 10.0, 100.0]
-RF_N_ESTIMATORS   = [1, 5, 10, 25, 50, 100]
-TREE_DEPTHS       = [1, 3, 5, 10, None]
-RIDGE_ALPHAS      = [0.1, 0.3, 1.0, 3.0, 10.0]
-
 
 def run_clf_dataset(name, X_train, y_train, X_test, y_test, max_loo, n_jobs):
     print(f"\n--- {DATASET_TITLES[name]} (classification) ---")
     results = {}
 
-    # Decision tree — sweep depth
-    dt_means, dt_q25s, dt_q75s = [], [], []
     for depth in TREE_DEPTHS:
+        dlabel = "∞" if depth is None else str(depth)
         factory = lambda d=depth: DecisionTreeClassifier(max_depth=d, random_state=42)
         mean, q25, q75 = measure_stability_clf(factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
-        dt_means.append(mean); dt_q25s.append(q25); dt_q75s.append(q75)
-        label = f"depth={depth if depth is not None else '∞'}"
-        print(f"  DTree {label:12s}  β̂={mean:.4f}")
-    results["DTree"] = {"depths": [d if d is not None else 999999 for d in TREE_DEPTHS],
-                        "mean": dt_means, "q25": dt_q25s, "q75": dt_q75s}
+        label = f"DTree depth={dlabel}"
+        results[label] = {"beta_01": mean, "q25_01": q25, "q75_01": q75}
+        print(f"  {label:20s}  β̂={mean:.4f}")
 
-    # Random forest — sweep n_estimators
-    rf_means, rf_q25s, rf_q75s = [], [], []
+    for C in SVC_C_VALUES:
+        factory = lambda C=C: LinearSVC(C=C, max_iter=2000)
+        mean, q25, q75 = measure_stability_clf(factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
+        label = f"SVC C={C}"
+        results[label] = {"beta_01": mean, "q25_01": q25, "q75_01": q75}
+        print(f"  {label:20s}  β̂={mean:.4f}")
+
     for n in RF_N_ESTIMATORS:
         factory = lambda n=n: RandomForestClassifier(n_estimators=n, random_state=42, n_jobs=1)
         mean, q25, q75 = measure_stability_clf(factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
-        rf_means.append(mean); rf_q25s.append(q25); rf_q75s.append(q75)
-        print(f"  RF n={n:4d}               β̂={mean:.4f}")
-    results["RF"] = {"n_estimators": RF_N_ESTIMATORS,
-                     "mean": rf_means, "q25": rf_q25s, "q75": rf_q75s}
+        label = f"RF n={n}"
+        results[label] = {"beta_01": mean, "q25_01": q25, "q75_01": q75}
+        print(f"  {label:20s}  β̂={mean:.4f}")
 
-    # SVC linear — sweep C (skip MNIST, too slow)
-    if name != "mnist":
-        svc_means, svc_q25s, svc_q75s = [], [], []
-        for C in SVC_C_VALUES:
-            factory = lambda C=C: SVC(kernel="linear", C=C)
-            mean, q25, q75 = measure_stability_clf(factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
-            svc_means.append(mean); svc_q25s.append(q25); svc_q75s.append(q75)
-            print(f"  SVC C={C:<6}           β̂={mean:.4f}")
-        results["SVC"] = {"C": SVC_C_VALUES, "mean": svc_means, "q25": svc_q25s, "q75": svc_q75s}
-
-    return results
+    return {"task": "binary" if name == "adult" else "multiclass", "results": results}
 
 
 def run_reg_dataset(name, X_train, y_train, X_test, y_test, max_loo, n_jobs):
     print(f"\n--- {DATASET_TITLES[name]} (regression) ---")
     results = {}
 
-    # Decision tree — sweep depth
-    dt_sq, dt_ab = {"mean":[],"q25":[],"q75":[]}, {"mean":[],"q25":[],"q75":[]}
     for depth in TREE_DEPTHS:
+        dlabel = "∞" if depth is None else str(depth)
         factory = lambda d=depth: DecisionTreeRegressor(max_depth=d, random_state=42)
         msq, q25sq, q75sq, mab, q25ab, q75ab = measure_stability_reg(
             factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
-        dt_sq["mean"].append(msq); dt_sq["q25"].append(q25sq); dt_sq["q75"].append(q75sq)
-        dt_ab["mean"].append(mab); dt_ab["q25"].append(q25ab); dt_ab["q75"].append(q75ab)
-        label = f"depth={depth if depth is not None else '∞'}"
-        print(f"  DTree {label:12s}  β̂_sq={msq:.4f}  β̂_abs={mab:.4f}")
-    results["DTree"] = {"depths": [d if d is not None else 999999 for d in TREE_DEPTHS],
-                        "sq": dt_sq, "abs": dt_ab}
+        label = f"DTree depth={dlabel}"
+        results[label] = {"beta_sq": msq, "q25_sq": q25sq, "q75_sq": q75sq,
+                          "beta_abs": mab, "q25_abs": q25ab, "q75_abs": q75ab}
+        print(f"  {label:20s}  β̂_sq={msq:.4f}  β̂_abs={mab:.4f}")
 
-    # Random forest — sweep n_estimators
-    rf_sq, rf_ab = {"mean":[],"q25":[],"q75":[]}, {"mean":[],"q25":[],"q75":[]}
-    for n in RF_N_ESTIMATORS:
-        factory = lambda n=n: RandomForestRegressor(n_estimators=n, random_state=42, n_jobs=1)
-        msq, q25sq, q75sq, mab, q25ab, q75ab = measure_stability_reg(
-            factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
-        rf_sq["mean"].append(msq); rf_sq["q25"].append(q25sq); rf_sq["q75"].append(q75sq)
-        rf_ab["mean"].append(mab); rf_ab["q25"].append(q25ab); rf_ab["q75"].append(q75ab)
-        print(f"  RF n={n:4d}               β̂_sq={msq:.4f}  β̂_abs={mab:.4f}")
-    results["RF"] = {"n_estimators": RF_N_ESTIMATORS, "sq": rf_sq, "abs": rf_ab}
-
-    # Ridge — sweep alpha
-    ridge_sq, ridge_ab = {"mean":[],"q25":[],"q75":[]}, {"mean":[],"q25":[],"q75":[]}
     for alpha in RIDGE_ALPHAS:
         factory = lambda a=alpha: Ridge(alpha=a)
         msq, q25sq, q75sq, mab, q25ab, q75ab = measure_stability_reg(
             factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
-        ridge_sq["mean"].append(msq); ridge_sq["q25"].append(q25sq); ridge_sq["q75"].append(q75sq)
-        ridge_ab["mean"].append(mab); ridge_ab["q25"].append(q25ab); ridge_ab["q75"].append(q75ab)
-        print(f"  Ridge α={alpha:<6}         β̂_sq={msq:.4f}  β̂_abs={mab:.4f}")
-    results["Ridge"] = {"alphas": RIDGE_ALPHAS, "sq": ridge_sq, "abs": ridge_ab}
+        label = f"Ridge α={alpha}"
+        results[label] = {"beta_sq": msq, "q25_sq": q25sq, "q75_sq": q75sq,
+                          "beta_abs": mab, "q25_abs": q25ab, "q75_abs": q75ab}
+        print(f"  {label:20s}  β̂_sq={msq:.4f}  β̂_abs={mab:.4f}")
 
-    return results
+    for n in RF_N_ESTIMATORS:
+        factory = lambda n=n: RandomForestRegressor(n_estimators=n, random_state=42, n_jobs=1)
+        msq, q25sq, q75sq, mab, q25ab, q75ab = measure_stability_reg(
+            factory, X_train, y_train, X_test, y_test, max_loo, n_jobs)
+        label = f"RF n={n}"
+        results[label] = {"beta_sq": msq, "q25_sq": q25sq, "q75_sq": q75sq,
+                          "beta_abs": mab, "q25_abs": q25ab, "q75_abs": q75ab}
+        print(f"  {label:20s}  β̂_sq={msq:.4f}  β̂_abs={mab:.4f}")
+
+    return {"task": "regression", "results": results}
 
 
 # ---------------------------------------------------------------------------
@@ -225,72 +206,96 @@ def _savefig(name):
     print(f"Saved → {path}")
 
 
-def plot_clf(name, res):
-    fig, axes = plt.subplots(1, len(res), figsize=(5 * len(res), 4))
-    if len(res) == 1:
+def _iqr_errbar(betas, q25s, q75s):
+    lo = [max(0.0, b - q) for b, q in zip(betas, q25s)]
+    hi = [max(0.0, q - b) for b, q in zip(betas, q75s)]
+    return [lo, hi]
+
+
+def plot_clf_dataset(name: str, results: dict):
+    labels = [l for l in results if not l.startswith("RF")]
+    betas  = [results[l]["beta_01"] for l in labels]
+    q25s   = [results[l]["q25_01"]  for l in labels]
+    q75s   = [results[l]["q75_01"]  for l in labels]
+
+    x = np.arange(len(labels))
+    fig, ax = plt.subplots(figsize=(max(7, len(labels) * 0.8), 4))
+    ax.bar(x, betas, yerr=_iqr_errbar(betas, q25s, q75s), capsize=4, alpha=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+    ax.set_ylabel("Avg. LOO instability β (0-1 loss)")
+    ax.set_title(f"LOO Instability — {DATASET_TITLES[name]}\n(error bars: IQR)")
+    plt.tight_layout()
+    _savefig(f"stability_{name}.png")
+
+
+def plot_reg_dataset(name: str, results: dict):
+    labels    = [l for l in results if not l.startswith("RF")]
+    betas_sq  = [results[l]["beta_sq"]  for l in labels]
+    betas_abs = [results[l]["beta_abs"] for l in labels]
+    q25_sq    = [results[l]["q25_sq"]   for l in labels]
+    q75_sq    = [results[l]["q75_sq"]   for l in labels]
+    q25_abs   = [results[l]["q25_abs"]  for l in labels]
+    q75_abs   = [results[l]["q75_abs"]  for l in labels]
+
+    x     = np.arange(len(labels))
+    width = 0.35
+    fig, ax = plt.subplots(figsize=(max(7, len(labels) * 0.8), 4))
+    ax.bar(x - width/2, betas_sq,  width, yerr=_iqr_errbar(betas_sq,  q25_sq,  q75_sq),
+           capsize=4, label="Squared loss",  alpha=0.8)
+    ax.bar(x + width/2, betas_abs, width, yerr=_iqr_errbar(betas_abs, q25_abs, q75_abs),
+           capsize=4, label="Absolute loss", alpha=0.8)
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, rotation=30, ha="right", fontsize=8)
+    ax.set_ylabel("Avg. LOO instability β")
+    ax.set_title(f"LOO Instability — {DATASET_TITLES[name]}\n(error bars: IQR)")
+    ax.legend()
+    plt.tight_layout()
+    _savefig(f"stability_{name}.png")
+
+
+def plot_rf_instability(all_results: dict):
+    """Line plot: β vs. n_estimators, one subplot per dataset."""
+    dataset_order = ["adult", "mnist", "ca_housing", "communities"]
+    datasets = [(n, all_results[n]) for n in dataset_order if n in all_results]
+
+    fig, axes = plt.subplots(1, len(datasets), figsize=(4 * len(datasets), 4))
+    if len(datasets) == 1:
         axes = [axes]
 
-    learner_labels = {"DTree": "Decision Tree (depth)", "RF": "Random Forest (n)", "SVC": "SVC linear (C)"}
-    x_vals = {"DTree": [str(d) if d != 999999 else "∞" for d in res["DTree"]["depths"]],
-               "RF":   [str(n) for n in RF_N_ESTIMATORS]}
-    if "SVC" in res:
-        x_vals["SVC"] = [str(c) for c in SVC_C_VALUES]
+    for ax, (name, dataset_res) in zip(axes, datasets):
+        results = dataset_res["results"]
+        rf_entries = [(int(k.split("=")[1]), v) for k, v in results.items() if k.startswith("RF n=")]
+        rf_entries.sort()
+        ns = [e[0] for e in rf_entries]
 
-    for ax, (learner, data) in zip(axes, res.items()):
-        xs = range(len(x_vals[learner]))
-        means = data["mean"]
-        errs  = [_iqr_errbar(m, q25, q75) for m, q25, q75 in zip(means, data["q25"], data["q75"])]
-        lowers = [e[0][0] for e in errs]
-        uppers = [e[1][0] for e in errs]
-        ax.errorbar(xs, means, yerr=[lowers, uppers], fmt="-o", capsize=4)
-        ax.set_xticks(xs)
-        ax.set_xticklabels(x_vals[learner])
-        ax.set_xlabel(learner_labels[learner])
+        if dataset_res.get("task") in ("binary", "multiclass"):
+            betas = [e[1]["beta_01"] for e in rf_entries]
+            ax.plot(ns, betas, marker="o", color="steelblue", label="0-1 loss")
+        else:
+            betas_sq  = [e[1]["beta_sq"]  for e in rf_entries]
+            betas_abs = [e[1]["beta_abs"] for e in rf_entries]
+            ax.plot(ns, betas_sq,  marker="o", color="steelblue",  label="Squared loss")
+            ax.plot(ns, betas_abs, marker="s", color="darkorange", label="Absolute loss")
+            ax.legend(fontsize=7)
+
+        ax.set_xlabel("# Estimators")
         ax.set_ylabel(r"Avg. LOO Instability $\hat{\beta}$")
-        ax.set_title(learner)
+        ax.set_title(DATASET_TITLES.get(name, name))
 
-    fig.suptitle(f"LOO Instability — {DATASET_TITLES[name]}", fontsize=12)
+    fig.suptitle("RF LOO Instability vs. # Estimators", fontsize=12)
     plt.tight_layout()
-    _savefig(f"stability_{name}_clf.png")
-
-
-def plot_reg(name, res, loss="sq"):
-    fig, axes = plt.subplots(1, len(res), figsize=(5 * len(res), 4))
-    if len(res) == 1:
-        axes = [axes]
-
-    x_vals = {"DTree": [str(d) if d != 999999 else "∞" for d in res["DTree"]["depths"]],
-               "RF":   [str(n) for n in RF_N_ESTIMATORS],
-               "Ridge":[str(a) for a in RIDGE_ALPHAS]}
-    learner_labels = {"DTree": "Decision Tree (depth)", "RF": "Random Forest (n)", "Ridge": "Ridge (α)"}
-    ylabel = r"Avg. LOO Instability $\hat{\beta}$" + (" (squared)" if loss == "sq" else " (absolute)")
-
-    for ax, (learner, data) in zip(axes, res.items()):
-        d = data[loss]
-        xs = range(len(x_vals[learner]))
-        means = d["mean"]
-        errs  = [_iqr_errbar(m, q25, q75) for m, q25, q75 in zip(means, d["q25"], d["q75"])]
-        lowers = [e[0][0] for e in errs]
-        uppers = [e[1][0] for e in errs]
-        ax.errorbar(xs, means, yerr=[lowers, uppers], fmt="-o", capsize=4)
-        ax.set_xticks(xs)
-        ax.set_xticklabels(x_vals[learner])
-        ax.set_xlabel(learner_labels[learner])
-        ax.set_ylabel(ylabel)
-        ax.set_title(learner)
-
-    fig.suptitle(f"LOO Instability — {DATASET_TITLES[name]}", fontsize=12)
-    plt.tight_layout()
-    _savefig(f"stability_{name}_reg_{loss}.png")
+    _savefig("stability_rf_vs_estimators.png")
 
 
 def plot_all(all_results):
-    for name, res in all_results.items():
-        if name in ("adult", "mnist"):
-            plot_clf(name, res)
+    for name, dataset_res in all_results.items():
+        task = dataset_res.get("task", "")
+        if task in ("binary", "multiclass"):
+            plot_clf_dataset(name, dataset_res["results"])
         else:
-            plot_reg(name, res, loss="sq")
-            plot_reg(name, res, loss="abs")
+            plot_reg_dataset(name, dataset_res["results"])
+    plot_rf_instability(all_results)
 
 
 # ---------------------------------------------------------------------------
@@ -300,14 +305,22 @@ def plot_all(all_results):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--plot_only", action="store_true")
-    p.add_argument("--max_loo", type=int, default=None,
-                   help="Max LOO iterations per dataset (None = full)")
+    p.add_argument("--n_train", type=int, default=500,
+                   help="Training samples to subsample (default 500)")
     p.add_argument("--n_jobs", type=int, default=-1)
     return p.parse_args()
 
 
+def _subsample(X, y, n, rng):
+    if n >= len(X):
+        return X, y
+    idx = rng.choice(len(X), size=n, replace=False)
+    return X[idx], y[idx]
+
+
 if __name__ == "__main__":
     args = parse_args()
+    rng = np.random.default_rng(42)
 
     if args.plot_only:
         with open(RESULTS_FILE) as f:
@@ -316,19 +329,22 @@ if __name__ == "__main__":
     else:
         all_results = {}
 
-        # Classification datasets
         for name, loader in [("adult", load_adult), ("mnist", lambda: load_mnist(max_samples=5000))]:
             X, y, _ = loader()
             X_train, X_test, y_train, y_test = split_train_test(X, y, stratify=True)
+            X_train, y_train = _subsample(X_train, y_train, args.n_train, rng)
+            print(f"  {name}: using {len(X_train)} training samples")
             all_results[name] = run_clf_dataset(name, X_train, y_train, X_test, y_test,
-                                                args.max_loo, args.n_jobs)
+                                                max_loo=None, n_jobs=args.n_jobs)
 
-        # Regression datasets
-        for name, loader in [("ca_housing", load_ca_housing), ("communities_crime", load_communities_crime)]:
+        for name, loader in [("ca_housing", load_ca_housing),
+                              ("communities", load_communities_crime)]:
             X, y, _ = loader()
             X_train, X_test, y_train, y_test = split_train_test(X, y, stratify=False)
+            X_train, y_train = _subsample(X_train, y_train, args.n_train, rng)
+            print(f"  {name}: using {len(X_train)} training samples")
             all_results[name] = run_reg_dataset(name, X_train, y_train, X_test, y_test,
-                                                args.max_loo, args.n_jobs)
+                                                max_loo=None, n_jobs=args.n_jobs)
 
         with open(RESULTS_FILE, "w") as f:
             json.dump(all_results, f, indent=2)
